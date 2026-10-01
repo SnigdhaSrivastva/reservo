@@ -66,6 +66,13 @@ public class ReservoServer {
                                             notificationDAO, auditDAO, bookingService,
                                             cleanupInterval, promotionInterval);
             
+            // Materialize bookable slots for every resource's booking horizon
+            new SlotGenerator(resourceDAO, timeSlotDAO,
+                    java.time.ZoneId.of(Config.get("slots.zone", "America/New_York")),
+                    java.time.LocalTime.parse(Config.get("slots.open", "08:00")),
+                    java.time.LocalTime.parse(Config.get("slots.close", "22:00")))
+                .generate(java.time.Instant.now());
+
             // Start scheduler
             scheduler.start();
             
@@ -85,7 +92,7 @@ public class ReservoServer {
             
             // Configure WebSocket
             JettyWebSocketServletContainerInitializer.configure(context, (servletContext, wsContainer) -> {
-                wsContainer.addEndpoint(WebSocketEndpoint.class);
+                wsContainer.addMapping("/ws", (req, resp) -> new WebSocketEndpoint());
             });
             
             // Register REST API servlets

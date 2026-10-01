@@ -1,5 +1,8 @@
 package reservo.server;
 
+import reservo.service.BookingService;
+import reservo.service.SchedulerService;
+
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.Set;
 

@@ -99,6 +99,35 @@ public class TimeSlotDAO {
         return slots;
     }
 
+    /**
+     * Inserts the given [start, end) slots for a resource, skipping any that already exist.
+     * Safe to call repeatedly.
+     *
+     * @return number of slots inserted
+     */
+    public int insertMissingSlots(Integer resourceId, int capacity, List<Instant[]> slots) throws SQLException {
+        String sql = "INSERT INTO time_slot (resource_id, start_ts, end_ts, capacity_remaining) " +
+                     "SELECT ?, ?, ?, ? WHERE NOT EXISTS " +
+                     "(SELECT 1 FROM time_slot WHERE resource_id = ? AND start_ts = ? AND end_ts = ?)";
+        int inserted = 0;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (Instant[] slot : slots) {
+                Timestamp start = Timestamp.from(slot[0]);
+                Timestamp end = Timestamp.from(slot[1]);
+                ps.setInt(1, resourceId);
+                ps.setTimestamp(2, start);
+                ps.setTimestamp(3, end);
+                ps.setInt(4, capacity);
+                ps.setInt(5, resourceId);
+                ps.setTimestamp(6, start);
+                ps.setTimestamp(7, end);
+                inserted += ps.executeUpdate();
+            }
+        }
+        return inserted;
+    }
+
     private TimeSlot mapRow(ResultSet rs) throws SQLException {
         TimeSlot slot = new TimeSlot();
         slot.setId(rs.getInt("id"));

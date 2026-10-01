@@ -21,6 +21,12 @@ public class BookingServlet extends BaseServlet {
         this.wsManager = wsManager;
     }
 
+    /** Servlet path + path info, e.g. "/holds", "/holds/7/confirm", "/reservations/3/cancel". */
+    private static String fullPath(HttpServletRequest request) {
+        String pathInfo = request.getPathInfo();
+        return request.getServletPath() + (pathInfo == null ? "" : pathInfo);
+    }
+
     private Integer getUserId(HttpServletRequest request) {
         String token = request.getHeader("Authorization");
         if (token != null && token.startsWith("Bearer ")) {
@@ -36,8 +42,7 @@ public class BookingServlet extends BaseServlet {
     @Override
     protected void doPost(HttpServletRequest request, HttpServletResponse response) 
             throws ServletException, IOException {
-        String path = request.getPathInfo();
-        if (path == null) path = "";
+        String path = fullPath(request);
 
         Integer userId = getUserId(request);
         if (userId == null) {
@@ -92,8 +97,7 @@ public class BookingServlet extends BaseServlet {
     @Override
     protected void doDelete(HttpServletRequest request, HttpServletResponse response) 
             throws ServletException, IOException {
-        String path = request.getPathInfo();
-        if (path == null) path = "";
+        String path = fullPath(request);
 
         Integer userId = getUserId(request);
         if (userId == null) {

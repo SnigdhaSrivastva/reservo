@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS reservation (
     status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED' CHECK (status IN ('CONFIRMED', 'CANCELLED')),
     request_id VARCHAR(255) UNIQUE NOT NULL, -- For idempotency
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    cancelled_at TIMESTAMP,
+    cancelled_at TIMESTAMP
     -- Note: Partial unique index for CONFIRMED status enforced at application level
     -- H2 doesn't support partial indexes, so we rely on application logic
 );

@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -130,7 +131,7 @@ public class SchedulerService {
             // For simplicity, we'll check a subset. In production, use a more efficient query.
             
             // Get all unique time slots with waitlist entries that have capacity
-            List<TimeSlot> slotsWithCapacity = timeSlotDAO.findAvailableSlots(1, Instant.now(), Instant.now().plusDays(30));
+            List<TimeSlot> slotsWithCapacity = timeSlotDAO.findAvailableSlots(1, Instant.now(), Instant.now().plus(30, ChronoUnit.DAYS));
             
             for (TimeSlot slot : slotsWithCapacity) {
                 try {

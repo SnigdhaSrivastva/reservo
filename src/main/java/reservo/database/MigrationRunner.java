@@ -100,7 +100,7 @@ public class MigrationRunner {
         try (Statement stmt = conn.createStatement()) {
             for (String statement : statements) {
                 String trimmed = statement.trim();
-                if (!trimmed.isEmpty() && !trimmed.startsWith("--")) {
+                if (!trimmed.isEmpty()) {
                     try {
                         stmt.execute(trimmed);
                     } catch (SQLException e) {
@@ -133,36 +133,45 @@ public class MigrationRunner {
         }
     }
 
-    private static String[] splitStatements(String sql) {
-        // Simple split by semicolon - in production, use a proper SQL parser
+    /**
+     * Splits a SQL script on semicolons, ignoring semicolons inside quoted strings
+     * and dropping "--" line comments (so apostrophes in comments can't open a string).
+     */
+    static String[] splitStatements(String sql) {
         List<String> statements = new ArrayList<>();
         StringBuilder current = new StringBuilder();
-        boolean inString = false;
-        char stringChar = 0;
-        
-        for (char c : sql.toCharArray()) {
-            if ((c == '\'' || c == '"') && (current.length() == 0 || current.charAt(current.length() - 1) != '\\')) {
-                if (!inString) {
-                    inString = true;
-                    stringChar = c;
-                } else if (c == stringChar) {
-                    inString = false;
-                    stringChar = 0;
+        char quote = 0;
+
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+
+            if (quote == 0 && c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
+                while (i < sql.length() && sql.charAt(i) != '\n') {
+                    i++;
+                }
+                current.append('\n');
+                continue;
+            }
+
+            if (c == '\'' || c == '"') {
+                if (quote == 0) {
+                    quote = c;
+                } else if (c == quote) {
+                    quote = 0;
                 }
             }
-            
-            current.append(c);
-            
-            if (!inString && c == ';') {
+
+            if (quote == 0 && c == ';') {
                 statements.add(current.toString());
                 current = new StringBuilder();
+            } else {
+                current.append(c);
             }
         }
-        
-        if (current.length() > 0) {
+
+        if (!current.toString().isBlank()) {
             statements.add(current.toString());
         }
-        
         return statements.toArray(new String[0]);
     }
 
