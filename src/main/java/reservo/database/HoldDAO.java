@@ -90,12 +90,16 @@ public class HoldDAO {
         return null;
     }
 
-    public void delete(Integer id) throws SQLException {
+    /**
+     * Deletes a hold. Returns true only for the caller that actually removed the row,
+     * which lets confirm / cancel / expiry race safely: exactly one of them "claims" the hold.
+     */
+    public boolean delete(Integer id) throws SQLException {
         String sql = "DELETE FROM hold WHERE id = ?";
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, id);
-            ps.executeUpdate();
+            return ps.executeUpdate() == 1;
         }
     }
 

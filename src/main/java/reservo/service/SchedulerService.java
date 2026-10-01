@@ -98,8 +98,11 @@ public class SchedulerService {
                     try {
                         TimeSlot slot = timeSlotDAO.findById(hold.getTimeSlotId());
                         
-                        holdDAO.delete(hold.getId());
-                        
+                        if (!holdDAO.delete(hold.getId())) {
+                            continue; // already confirmed or cancelled
+                        }
+                        timeSlotDAO.incrementCapacity(hold.getTimeSlotId(), hold.getQty());
+
                         if (slot != null) {
                             audit("HOLD_EXPIRED", hold.getUserId(), slot.getResourceId(),
                                   String.format("{\"holdId\":%d,\"timeSlotId\":%d}", hold.getId(), hold.getTimeSlotId()));

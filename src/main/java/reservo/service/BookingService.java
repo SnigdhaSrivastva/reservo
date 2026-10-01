@@ -87,6 +87,14 @@ public class BookingService {
             return existingByRequestId;
         }
 
+        // Reserve capacity with a single conditional UPDATE. The database applies it
+        // atomically, so when many users race for the last unit exactly one succeeds.
+        try {
+            timeSlotDAO.decrementCapacity(timeSlotId, qty);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Insufficient capacity");
+        }
+
         Instant expiresAt = Instant.now().plusSeconds(holdDurationSeconds);
         Hold hold = new Hold();
         hold.setUserId(userId);
@@ -96,7 +104,13 @@ public class BookingService {
         hold.setRequestId(requestId);
         hold.setCreatedAt(Instant.now());
 
-        Integer holdId = holdDAO.create(hold);
+        Integer holdId;
+        try {
+            holdId = holdDAO.create(hold);
+        } catch (SQLException e) {
+            timeSlotDAO.incrementCapacity(timeSlotId, qty);
+            throw e;
+        }
         hold.setId(holdId);
 
         audit("HOLD_CREATED", userId, slot.getResourceId(), 
@@ -128,12 +142,6 @@ public class BookingService {
                     throw new IllegalArgumentException("Time slot not found");
                 }
 
-                // Re-verify capacity
-                if (slot.getCapacityRemaining() < hold.getQty()) {
-                    conn.rollback();
-                    throw new IllegalStateException("Insufficient capacity - slot was taken");
-                }
-
                 // Re-verify hold is still valid
                 Hold recheckedHold = holdDAO.findById(holdId);
                 if (recheckedHold == null || recheckedHold.isExpired()) {
@@ -152,6 +160,12 @@ public class BookingService {
                     return existing;
                 }
 
+                // Claim the hold. If a concurrent confirm, cancel or expiry got there first, stop.
+                if (!holdDAO.delete(holdId)) {
+                    conn.rollback();
+                    throw new IllegalStateException("Hold is no longer valid");
+                }
+
                 Reservation reservation = new Reservation();
                 reservation.setUserId(userId);
                 reservation.setTimeSlotId(hold.getTimeSlotId());
@@ -160,14 +174,15 @@ public class BookingService {
                 reservation.setRequestId(requestId);
                 reservation.setCreatedAt(Instant.now());
 
-                Integer reservationId = reservationDAO.create(reservation);
+                // Capacity was reserved when the hold was created, so it is not decremented again
+                Integer reservationId;
+                try {
+                    reservationId = reservationDAO.create(reservation);
+                } catch (SQLException e) {
+                    timeSlotDAO.incrementCapacity(hold.getTimeSlotId(), hold.getQty());
+                    throw e;
+                }
                 reservation.setId(reservationId);
-
-                // Decrement capacity atomically
-                timeSlotDAO.decrementCapacity(hold.getTimeSlotId(), hold.getQty());
-
-                // Delete hold
-                holdDAO.delete(holdId);
 
                 conn.commit();
 
@@ -196,7 +211,10 @@ public class BookingService {
             throw new IllegalArgumentException("Hold does not belong to user");
         }
 
-        holdDAO.delete(holdId);
+        if (!holdDAO.delete(holdId)) {
+            throw new IllegalStateException("Hold is no longer valid");
+        }
+        timeSlotDAO.incrementCapacity(hold.getTimeSlotId(), hold.getQty());
         TimeSlot slot = timeSlotDAO.findById(hold.getTimeSlotId());
         if (slot != null) {
             audit("HOLD_CANCELLED", userId, slot.getResourceId(),
