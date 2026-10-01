@@ -1,167 +1,116 @@
-# Reservo: A Transaction-Safe Multi-Resource Reservation System
+# Reservo: Transaction-Safe Resource Reservation
 
-**CS9053 Final Project - Fall 2025**  
-**Team**: Snigdha Srivastva (ss19776), Utkarsh Mittal (um2100)
+[![CI](https://github.com/SnigdhaSrivastva/reservo/actions/workflows/ci.yml/badge.svg)](https://github.com/SnigdhaSrivastva/reservo/actions/workflows/ci.yml)
+![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
 
-## Overview
+A booking backend for shared campus resources (study rooms, sports courts, lab benches) where **many users compete for limited, time-boxed capacity**. Its core guarantee: **a slot is never oversold**, even when dozens of requests arrive at the same moment.
 
-Reservo is a campus resource reservation system designed to handle concurrent bookings safely and fairly. It supports study rooms, sports courts, lab benches, and clinic slots with real-time availability updates, hold/confirm workflows, waitlist promotion, and comprehensive audit trails.
+> Team project for NYU CS9053 (Java), Fall 2025, by **Snigdha Srivastva** and **Utkarsh Mittal**.
 
-## Key Features
+## How booking works
 
-- **Transaction-Safe Concurrent Booking**: Pessimistic locking ensures single-winner guarantees for contested slots
-- **Real-Time Updates**: WebSocket push notifications update all clients instantly
-- **Hold/Confirm Workflow**: Short-lived holds with countdown timers prevent stale bookings
-- **Automatic Waitlist Promotion**: FIFO queue automatically promotes users when capacity frees
-- **Audit Trail**: Complete append-only log of all state transitions
-- **Admin Console**: Resource management and isolation level demonstration tools
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as Jetty REST API
+    participant S as BookingService
+    participant DB as Database
+    participant WS as WebSocket clients
 
-## Tech Stack
-
-- **Java 21**
-- **JavaFX** for desktop client UI
-- **Jetty** for HTTP server and WebSocket support
-- **JDBC** with H2 (dev) / PostgreSQL (production)
-- **Maven** for build management
-- **JUnit 5** + **Testcontainers** for testing
-
-## Project Structure
-
-```
-reservo/
-├── src/main/java/reservo/
-│   ├── client/          # JavaFX client application
-│   ├── server/          # HTTP/WebSocket server
-│   ├── database/        # JDBC data access layer
-│   ├── model/           # Domain models
-│   ├── service/         # Business logic
-│   └── common/          # Shared utilities
-├── src/main/resources/
-│   ├── migrations/      # SQL migration scripts
-│   └── seed.sql         # Initial test data
-├── src/test/java/       # Integration and unit tests
-└── pom.xml
+    U->>API: POST /holds {timeSlotId}
+    API->>S: createHold()
+    S->>DB: UPDATE time_slot SET capacity = capacity - 1<br/>WHERE id = ? AND capacity >= 1
+    alt 1 row updated (won the race)
+        S->>DB: INSERT hold (expires in 5 min)
+        S-->>WS: AVAILABILITY_CHANGED
+        API-->>U: 200 hold
+    else 0 rows updated (sold out)
+        API-->>U: 400 Insufficient capacity
+    end
+    U->>API: POST /holds/{id}/confirm
+    S->>DB: DELETE hold (claim: only one caller succeeds)
+    S->>DB: INSERT reservation
+    S-->>WS: RESERVATION_CREATED
 ```
 
-## Building and Running
+**Concurrency design**
+- **Atomic capacity reservation.** A hold reserves capacity with one conditional `UPDATE … WHERE capacity_remaining >= qty`. The database serializes these updates, so when N users race for the last unit, exactly one gets a row back.
+- **Claim-by-delete.** Confirm, cancel and the expiry sweeper all start by deleting the hold row, and only the caller whose `DELETE` affected a row continues. A hold therefore becomes at most one reservation, and its capacity is released at most once.
+- **Idempotency keys.** Clients can send a `requestId`, and retried requests return the original hold or reservation instead of booking twice.
+- **Hold expiry and waitlist.** A scheduler releases expired holds and promotes the FIFO waitlist when capacity frees up.
+- **Audit trail.** Every state transition is appended to `audit_event`.
 
-### Prerequisites
+## Tests
 
-- Java 21 or higher
-- Maven 3.8+
-- PostgreSQL (for production) or H2 (included, for development)
+`mvn test` runs 17 tests. They include multi-threaded races that release 24 workers at once through a latch:
 
-### Build
+| Test | Asserts |
+|---|---|
+| `onlyOneUserCanHoldTheLastUnit` | 24 concurrent holds on capacity 1 → exactly 1 succeeds, capacity ends at 0 |
+| `capacityIsNeverOversold` | 24 concurrent holds on capacity 5 → exactly 5 succeed |
+| `aHoldCanBeConfirmedOnlyOnce` | 8 concurrent confirms of one hold → exactly 1 reservation |
+| `cancellingAHoldReleasesCapacity` | cancel returns capacity and another user can book |
+| `MigrationRunnerTest` | SQL splitter handles comments, quotes, and apostrophes inside comments |
+| `SlotGeneratorTest` | slots fill opening hours, skip the past, drop partial slots |
+| `PasswordUtilTest` | salted PBKDF2 hashing, verification, malformed input |
+
+## Architecture
+
+```
+src/main/java/reservo/
+├── server/     Jetty 10 HTTP servlets + WebSocket endpoint (/ws)
+├── service/    BookingService, SchedulerService (expiry, waitlist), SlotGenerator
+├── database/   JDBC DAOs, HikariCP pool, SQL migration runner
+├── model/      Domain objects (Resource, TimeSlot, Hold, Reservation, …)
+├── client/     JavaFX desktop client
+└── common/     Config, PBKDF2 password hashing
+src/main/resources/migrations/   versioned schema + seed data
+```
+
+**Stack:** Java 21 · Jetty 10 (servlets + WebSocket) · JDBC · HikariCP · H2 (dev) / PostgreSQL · Jackson · JavaFX · JUnit 5 · Maven · GitHub Actions
+
+## Run it
+
+Requires Java 21 and Maven.
 
 ```bash
-mvn clean compile
+mvn package
+java -jar target/reservo-1.0.0-jar-with-dependencies.jar   # http://localhost:8080
 ```
 
-### Run Server
+It starts on an in-memory H2 database, runs migrations, seeds demo data and generates bookable slots. Demo logins: `admin / admin123`, `alice / test123`.
 
 ```bash
-mvn exec:java -Dexec.mainClass="reservo.server.ReservoServer"
+# log in
+TOKEN=$(curl -s -X POST localhost:8080/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"test123"}' | jq -r .token)
+
+# find an open slot, hold it, confirm it
+curl -s "localhost:8080/availability?resourceId=1&from=2026-01-01T00:00:00Z&to=2030-01-01T00:00:00Z" | jq '.[0]'
+curl -s -X POST localhost:8080/holds -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"timeSlotId":1}'
+curl -s -X POST localhost:8080/holds/1/confirm -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
 ```
 
-Or build and run the server JAR:
+JavaFX client: `mvn javafx:run`
 
-```bash
-mvn clean package
-java -jar target/reservo-1.0.0-jar-with-dependencies.jar server
-```
+To use PostgreSQL, set `db.use_h2=false` and the `db.url / db.user / db.password` values in `src/main/resources/config.properties`.
 
-### Run Client
+## API
 
-```bash
-mvn javafx:run
-```
+| Method | Path | Description |
+|---|---|---|
+| POST | `/auth/register`, `/auth/login` | Create account / get bearer token |
+| GET | `/resources` | List resources |
+| GET | `/availability?resourceId=&from=&to=` | Slots with remaining capacity |
+| POST | `/holds` | Hold a slot (`timeSlotId`, optional `qty`, `requestId`) |
+| POST | `/holds/{id}/confirm` | Turn a hold into a reservation |
+| DELETE | `/holds/{id}` | Release a hold |
+| POST | `/reservations/{id}/cancel` | Cancel a reservation |
+| POST | `/waitlist` | Join the waitlist for a full slot |
+| GET | `/notifications` | User notifications |
+| POST | `/admin/isolation-mode` | Switch transaction isolation level (admin) |
+| WS | `/ws` | Live availability and reservation events |
 
-Or build and run separately:
+## Configuration
 
-```bash
-mvn clean package
-java --module-path <javafx-path> --add-modules javafx.controls,javafx.fxml -jar target/reservo-client.jar
-```
-
-## Database Setup
-
-### Development (H2 - in-memory)
-
-The server automatically creates an H2 database on startup when using the default configuration.
-
-**Note**: The seed data includes test users, but you'll need to register new users via the API or update the password hashes. Default test credentials:
-- Username: `admin`, Password: `admin123` (if hash is correct)
-- Username: `alice`, Password: `test123` (if hash is correct)
-
-For production use, register users via `POST /auth/register` endpoint.
-
-### Production (PostgreSQL)
-
-1. Create a PostgreSQL database:
-```sql
-CREATE DATABASE reservo;
-```
-
-2. Run migrations:
-```bash
-# Migrations are automatically applied on server startup
-# Or run manually: psql -d reservo -f src/main/resources/migrations/001_initial_schema.sql
-```
-
-3. Update `config.properties`:
-```properties
-db.url=jdbc:postgresql://localhost:5432/reservo
-db.user=your_user
-db.password=your_password
-```
-
-## API Endpoints
-
-### Authentication
-- `POST /auth/register` - Register new user
-- `POST /auth/login` - Login and get session token
-
-### Discovery
-- `GET /resources` - List all resources
-- `GET /availability?resourceId={id}&from={iso-date}&to={iso-date}` - Get availability
-
-### Booking
-- `POST /holds` - Create a hold on a time slot
-- `POST /holds/{id}/confirm` - Confirm a hold (creates reservation)
-- `DELETE /holds/{id}` - Cancel a hold
-- `POST /reservations/{id}/cancel` - Cancel a reservation
-- `POST /waitlist` - Join waitlist for a slot
-
-### Events
-- `WebSocket /ws` - Real-time event stream
-
-### Admin
-- `POST /resources` - Create/edit resource
-- `POST /admin/simulate-contention` - Simulate concurrent booking attempts
-- `POST /admin/isolation-mode` - Change database isolation level
-
-## Demo Scenarios
-
-1. **Contention Test**: Two clients race for the last seat; observe single-winner guarantee
-2. **Waitlist Promotion**: Cancel a reservation and see automatic promotion of next in queue
-3. **Isolation Demo**: Toggle between READ COMMITTED and SERIALIZABLE to see phantom read prevention
-4. **Real-Time Updates**: Open multiple clients and see instant updates across all windows
-
-## Testing
-
-Run all tests:
-
-```bash
-mvn test
-```
-
-Run integration tests (requires Docker for Testcontainers):
-
-```bash
-mvn verify
-```
-
-## License
-
-This is an academic project for CS9053 at NYU.
-
+`src/main/resources/config.properties`: database, port, hold duration (default 5 min), expiry-sweep and waitlist intervals, connection-pool size, isolation level, and the opening hours and time zone used to generate slots.
