@@ -1,17 +1,17 @@
 -- Seed data for development and testing
--- Note: Simplified for H2 compatibility. For PostgreSQL, use generate_series for time slots.
+-- Time slots are generated at startup by SlotGenerator from each resource's settings.
 
 -- Default admin user (password: admin123)
--- Password hash is SHA-256 of "admin123"
+-- Password hash is salted PBKDF2-HMAC-SHA256 (see PasswordUtil)
 INSERT INTO users (username, email, password_hash, role) VALUES
-('admin', 'admin@reservo.edu', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'ADMIN');
+('admin', 'admin@reservo.edu', 'pbkdf2$210000$vRQX0E4iIOHg0KkHgoaiJg==$B2NNsgDyUwBoQW9GFvbnm8berO07mzlGdvOk1c/jSKU=', 'ADMIN');
 
 -- Test users (password: test123 for all)
--- Password hash is SHA-256 of "test123"
+-- Password hashes are salted PBKDF2-HMAC-SHA256 (see PasswordUtil)
 INSERT INTO users (username, email, password_hash, role) VALUES
-('alice', 'alice@test.edu', 'ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae', 'USER'),
-('bob', 'bob@test.edu', 'ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae', 'USER'),
-('charlie', 'charlie@test.edu', 'ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae', 'USER');
+('alice', 'alice@test.edu', 'pbkdf2$210000$fMJpL+0Gd5WYTafsk7fqYg==$8Q9goKjOZS+7qmrwdrJG82fqhgEhwPvu+HNjxsWsM8w=', 'USER'),
+('bob', 'bob@test.edu', 'pbkdf2$210000$fMJpL+0Gd5WYTafsk7fqYg==$8Q9goKjOZS+7qmrwdrJG82fqhgEhwPvu+HNjxsWsM8w=', 'USER'),
+('charlie', 'charlie@test.edu', 'pbkdf2$210000$fMJpL+0Gd5WYTafsk7fqYg==$8Q9goKjOZS+7qmrwdrJG82fqhgEhwPvu+HNjxsWsM8w=', 'USER');
 
 -- Sample resources
 INSERT INTO resources (name, description, capacity, slot_duration_minutes, booking_horizon_days, max_booking_hours_per_day, rules_json) VALUES
